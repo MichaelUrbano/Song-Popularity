@@ -27,9 +27,8 @@ def get_access_token(cid, secret):
         print("Could not create access token")
         return None
 
-def get_tracks(cid, secret, token, track_uris):
+def get_tracks(cid, secret, token, track_uris, con, cur):
     """Will translate URIs into readable tracknames"""
-    results = []
     endpoint = "https://api.spotify.com/v1/tracks"
     total_batches = (len(track_uris) + 49) // 50
     batch_counter = 0
@@ -43,15 +42,37 @@ def get_tracks(cid, secret, token, track_uris):
             response = requests.get(endpoint, headers=headers, params=params, timeout=30)
 
             if response.status_code == 200:
-                results.extend(response.json()["tracks"])
+                data = response.json()["tracks"]
+
+                for track in data:
+                    if track is None:
+                        continue
+                    track_id = track["id"]
+                    artist_id = track["artists"][0]["id"]
+                    track_name = track["name"]
+                    artist_name = track["artists"][0]["name"]
+
+                    cur.execute("""
+                        INSERT OR REPLACE INTO id_translations (
+                            track_id,
+                            artist_id,
+                            track_name,
+                            artist_name
+                        )
+                        VALUES (?, ?, ?, ?);
+                    """, (track_id, artist_id, track_name, artist_name))
+
+                con.commit()
                 batch_counter += 1
                 print(f"Completed batch {batch_counter}/{total_batches}")
                 break
+
             elif response.status_code == 429:
                 retry_after = int(response.headers.get("Retry-After", 30))
                 print(f"Rate limited, retrying after {retry_after} seconds...")
                 sleep(retry_after)
                 continue
+
             elif response.status_code == 401:
                 print("Access token expired, attempting to get a new one...")
                 sleep(10)
@@ -59,12 +80,11 @@ def get_tracks(cid, secret, token, track_uris):
                 if not token:
                     print("Token refresh failed...")
                 continue
+
             else:
                 print("Unknown error, trying again in 30 seconds...")
                 sleep(30)
                 continue
-
-    return results
 
 def main():
     """Will load environment variables to use the API, and retrieve track names"""
@@ -99,13 +119,6 @@ def main():
         """)
         rows = cur.fetchall()
         track_ids = [r[0] for r in rows]
-    except sqlite3.Error:
-        print("Could not query database")
-        return
-
-    result_tracks = get_tracks(client_id, client_secret, access_token, track_ids)
-
-    try:
         cur.execute("""
         CREATE TABLE IF NOT EXISTS id_translations (
             track_id TEXT PRIMARY KEY,
@@ -116,29 +129,20 @@ def main():
         """)
         con.commit()
 
-        for track in result_tracks:
-            track_id = track["id"]
-            artist_id = track["artists"][0]["id"]
-            track_name = track["name"]
-            artist_name = track["artists"][0]["name"]
-
-            cur.execute("""
-                INSERT OR REPLACE INTO id_translations (
-                    track_id,
-                    artist_id,
-                    track_name,
-                    artist_name
-                )
-                VALUES (?, ?, ?, ?);
-            """, (track_id, artist_id, track_name, artist_name))
-
-        con.commit()
-        print("Successfully inserted values into table")
-
+        cur.execute("SELECT track_id FROM id_translations;")
+        existing = {r[0] for r in cur.fetchall()}
+        track_ids = [tid for tid in track_ids if tid not in existing]
+        if not track_ids:
+            print("No new tracks to process.")
+            con.close()
+            return
     except sqlite3.Error:
-        print("Could not insert entries into database")
-
-    finally:
+        print("Could not utilize database")
+        return
+    try:
+        get_tracks(client_id, client_secret, access_token, track_ids, con, cur)
+        con.close()
+    except KeyboardInterrupt:
         con.close()
 
 if __name__ == "__main__":
