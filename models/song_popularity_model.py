@@ -150,7 +150,7 @@ else:
     print("Starting Hyperparameter Tuning...")
 
     param_dist = {
-        'reg__n_estimators': [200, 300], 
+        'reg__n_estimators': [200, 300],
         'reg__learning_rate': [0.1, 0.2],
         'reg__max_depth': [4, 5],
         'prep__chords__max_features': [500, 1000],
@@ -158,11 +158,11 @@ else:
     }
 
     random_search = RandomizedSearchCV(
-        pipeline, 
-        param_distributions=param_dist, 
-        n_iter=10, 
-        cv=5, 
-        n_jobs=-1, 
+        pipeline,
+        param_distributions=param_dist,
+        n_iter=10,
+        cv=5,
+        n_jobs=-1,
         verbose=1,
         scoring='neg_mean_absolute_error',
         random_state=42
